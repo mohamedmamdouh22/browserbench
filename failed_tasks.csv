@@ -1,0 +1,5 @@
+task_id,starting_url,task_description,ground_truth_url,ground_truth
+3,https://www.crunchbase.com,Who was the lead investor in OpenAI's pre-seed round? You must complete the task only using the starting website,https://www.crunchbase.com/organization/openai,Y Combinator
+9,https://streeteasy.com,"Who wrote the article ""How to Find the Perfect Roommate in NYC"" in the resources section of Streeteasy? You must complete the task only using the starting website",https://streeteasy.com/blog/how-to-find-a-roommate-in-nyc/,Kathryn O'Shea-Evans
+10,https://www.glassdoor.com/index.htm,"Who is the CEO of Glassdoor according to their ""Leadership"" section? You must complete the task only using the starting website",https://www.glassdoor.com/about/leadership/,Christian Sutherland-Wong
+13,https://www.dreamstime.com/,"Who is the author of the blogpost ""Do I Have to Cite Stock Photos?"", published on August 29, 2025? You must complete the task only using the starting website",https://www.dreamstime.com/blog/do-i-have-to-cite-stock-photos-76309,Stefania Iancu
