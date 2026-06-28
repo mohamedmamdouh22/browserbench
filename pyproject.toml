@@ -1,18 +1,13 @@
 [project]
 name = "browserbench"
 version = "0.1.0"
-description = "Browser benchmark tool for testing multiple hosted Chromium providers against autonomous web-browsing tasks"
+description = "Browser benchmark tool for testing the Intuned stealth Chromium against autonomous web-browsing tasks"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
-    "anchorbrowser",
     "python-dotenv",
     "browser-use",
-    "openai",
     "requests",
-    "browserbase",
-    "steel-sdk",
-    "hyperbrowser",
 ]
 
 [project.scripts]

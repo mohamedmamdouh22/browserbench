@@ -1,236 +1,116 @@
 """
-Browser automation script supporting multiple providers.
+Browser automation script using the Intuned stealth Chromium.
 
 Usage:
-  python browser_test.py --provider anchor      # Use Anchor browser with advanced stealth (default)
-  python browser_test.py --provider anchor --no-stealth # Use Anchor without stealth
-  python browser_test.py --provider browserbase # Use Browserbase with advanced stealth (default)
-  python browser_test.py --provider browserbase --no-stealth # Use Browserbase without stealth
-  python browser_test.py --provider steelbrowser # Use Steel browser with advanced stealth (default)
-  python browser_test.py --provider steelbrowser --no-stealth # Use Steel browser without stealth
-  python browser_test.py --provider hyperbrowser # Use Hyperbrowser with advanced stealth and features (default)
-  python browser_test.py --provider hyperbrowser --no-stealth # Use Hyperbrowser without stealth
+  python browser_test.py --task "Find the latest pricing for the Oculus Quest 3"
+  python browser_test.py --task "..." --no-stealth
 
 Environment variables required:
-- For Anchor: ANCHOR_API_KEY
-- For Browserbase: BROWSERBASE_API_KEY, BROWSERBASE_PROJECT_ID
-- For Steel: STEEL_API_KEY
-- For Hyperbrowser: HYPERBROWSER_API_KEY
-- For all: OPENAI_API_KEY
+  INTUNED_STEALTH_CHROMIUM_PATH  Path to the Intuned stealth Chromium binary
+  OPENAI_API_KEY                 OpenAI API key for the browser-use agent
 """
 
 import argparse
 import asyncio
 import os
 
-from browser_use import Agent, Controller
-from browser_use.browser import BrowserProfile, BrowserSession
-from browser_use.llm import ChatGroq
+from browser_use import Agent, BrowserProfile, BrowserSession
+from browser_use.llm.openai.chat import ChatOpenAI
 from dotenv import load_dotenv
 
-# Import provider modules
-from providers.anchor_provider import cleanup_session as anchor_cleanup
-from providers.anchor_provider import create_session as anchor_create
-from providers.browserbase_provider import cleanup_session as browserbase_cleanup
-from providers.browserbase_provider import create_session as browserbase_create
-from providers.hyperbrowser_provider import cleanup_session as hyperbrowser_cleanup
-from providers.hyperbrowser_provider import create_session as hyperbrowser_create
-from providers.steel_provider import cleanup_session as steel_cleanup
-from providers.steel_provider import create_session as steel_create
+from providers.intuned_provider import cleanup_session, create_session
 
 load_dotenv()
 
 
-async def main(
-    provider="anchor", stealth=True, task="Check the score of the last 3 patriots games"
-):
-    """Main function to run browser automation with the specified provider"""
-    # Create session based on provider
-    if provider == "anchor":
-        anchor_client, anchor_session, cdp_url = anchor_create(stealth=stealth)
-    elif provider == "browserbase":
-        browserbase_session_id, cdp_url, bb_client = browserbase_create(stealth=stealth)
-    elif provider == "steelbrowser":
-        steel_session_id, cdp_url = steel_create(stealth=stealth)
-    elif provider == "hyperbrowser":
-        hyperbrowser_session_id, cdp_url, hyperbrowser_session_url = (
-            hyperbrowser_create(stealth=stealth)
-        )
-    else:
-        raise ValueError(
-            f"Unknown provider: {provider}. Use 'anchor', 'browserbase', 'steelbrowser', or 'hyperbrowser'"
-        )
-    llm = ChatGroq(
-        model='openai/gpt-oss-120b',
+async def main(stealth: bool = True, task: str = "Check the score of the last 3 patriots games"):
+    """Run browser automation with the Intuned stealth Chromium."""
+    process, cdp_url, user_data_dir = create_session(stealth=stealth)
+
+    llm = ChatOpenAI(
+        model="gpt-5-mini",
+        api_key=os.environ.get("OPENAI_API_KEY"),
         temperature=0.0,
-        api_key=os.environ.get("GROQ_API_KEY"),
     )
 
-    # Initialize browser session with Anchor
-    profile = BrowserProfile(keep_alive=True)
-    browser_session = BrowserSession(
-        headless=False, cdp_url=cdp_url, browser_profile=profile
-    )
+    profile = BrowserProfile(cdp_url=cdp_url, keep_alive=True)
+    browser_session = BrowserSession(browser_profile=profile)
 
-    # Create controller and agent
-    controller = Controller()
     agent = Agent(
         task=task,
         llm=llm,
-        enable_memory=False,
-        use_vision=False,
-        controller=controller,
         browser_session=browser_session,
+        use_vision=False,
     )
 
-    # Run the agent
     history = await agent.run(max_steps=40)
-    print("History:", history)
 
-    # Debug: Check what attributes the history object has
-    print("History type:", type(history))
-    print("History attributes:", dir(history))
-
-    # Determine if the agent run completed successfully
-    # Note: This checks if the agent completed the task (is_done) and whether it
-    # reported success. This does NOT verify answer correctness - that should be
-    # evaluated separately by comparing agent_result to ground_truth.
-    # 
-    # We check final success, not whether there were any errors along the way,
-    # since agents often encounter and recover from errors during execution.
-    execution_successful = False  # Default to failure
+    execution_successful = False
     error_message = None
-    
-    # Check if task completed successfully
+
     if hasattr(history, "is_done") and hasattr(history, "is_successful"):
         is_done_attr = getattr(history, "is_done")
         is_successful_attr = getattr(history, "is_successful")
-        
         is_done_value = is_done_attr() if callable(is_done_attr) else is_done_attr
         is_successful_value = is_successful_attr() if callable(is_successful_attr) else is_successful_attr
-        
-        # Task succeeded if it's done AND successful
         execution_successful = is_done_value and is_successful_value
-        
-        # If not successful, collect error messages for debugging
         if not execution_successful and hasattr(history, "errors"):
             errors = history.errors()
             if errors:
                 error_message = "; ".join(str(e) for e in errors)
     else:
-        # Fallback: if is_done/is_successful not available, check for errors
         if hasattr(history, "has_errors"):
             has_errors_attr = getattr(history, "has_errors")
             has_errors_value = has_errors_attr() if callable(has_errors_attr) else has_errors_attr
-            
-            # If no errors, assume success; if errors, mark as failed
             execution_successful = not has_errors_value
-            
             if has_errors_value and hasattr(history, "errors"):
                 errors = history.errors()
                 if errors:
                     error_message = "; ".join(str(e) for e in errors)
-    
-    # Extract final result using the proper method
+
     final_message = ""
     try:
-        # Use the proper final_result() method
         if hasattr(history, "final_result"):
             final_message = history.final_result()
         else:
-            print("final_result() method not found, falling back to manual extraction")
-            # Fallback to manual extraction if the method doesn't exist
             if hasattr(history, "extracted_content"):
                 contents = history.extracted_content()
                 if contents:
-                    final_message = contents[-1]  # Get the last extracted content
-            elif hasattr(history, "__iter__"):
-                # If history is iterable, get the last item with extracted content
-                for action_result in reversed(list(history)):
-                    if (
-                        hasattr(action_result, "extracted_content")
-                        and action_result.extracted_content
-                    ):
-                        final_message = action_result.extracted_content
-                        break
+                    final_message = contents[-1]
     except Exception as e:
-        print(f"Error extracting final message: {e}")
         final_message = "Could not extract final message"
         error_message = str(e) if not error_message else f"{error_message}; {e}"
 
-    # Clean up - stop browser session and terminate provider session
     try:
-        print("Stopping browser session...")
         await browser_session.stop()
-        print("Browser session stopped successfully")
     except Exception as e:
         print(f"Error stopping browser session: {e}")
 
-    # Provider-specific cleanup using the provider modules
-    session_url = None
-    if (
-        provider == "anchor"
-        and "anchor_client" in locals()
-        and "anchor_session" in locals()
-    ):
-        session_url = anchor_cleanup(anchor_client, anchor_session)
-    elif (
-        provider == "browserbase"
-        and "browserbase_session_id" in locals()
-        and "bb_client" in locals()
-    ):
-        session_url = browserbase_cleanup(bb_client, browserbase_session_id)
-    elif provider == "steelbrowser" and "steel_session_id" in locals():
-        session_url = steel_cleanup(steel_session_id)
-    elif provider == "hyperbrowser" and "hyperbrowser_session_id" in locals():
-        session_url = hyperbrowser_cleanup(hyperbrowser_session_id)
+    cleanup_session(process, user_data_dir)
 
-    # Return the final result, session URL, execution success status, and error message
-    # execution_successful indicates whether the run completed without technical errors,
-    # NOT whether the agent got the correct answer
-    return final_message, session_url, execution_successful, error_message
+    return final_message, None, execution_successful, error_message
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(
-        description="Run browser automation with different providers"
-    )
-    parser.add_argument(
-        "--provider",
-        choices=["anchor", "browserbase", "steelbrowser", "hyperbrowser"],
-        default="anchor",
-        help="Browser provider to use (default: anchor)",
-    )
+    parser = argparse.ArgumentParser(description="Run browser automation with Intuned stealth Chromium")
     parser.add_argument(
         "--no-stealth",
         action="store_true",
-        help="Disable advanced stealth mode for Browserbase, Steel, and Hyperbrowser (stealth is enabled by default)",
+        help="Pass stealth=False to the provider (binary is always stealth build)",
     )
     parser.add_argument(
         "--task",
         type=str,
         default="Check the score of the last 3 patriots games",
-        help="Custom task for the browser agent (default: 'Check the score of the last 3 patriots games')",
+        help="Task for the browser agent",
     )
     args = parser.parse_args()
 
-    # For all providers, stealth is enabled by default, disabled only with --no-stealth
-    stealth_enabled = not args.no_stealth
-
-    final_result, session_data, execution_successful, error_message = asyncio.run(
-        main(provider=args.provider, stealth=stealth_enabled, task=args.task)
+    final_result, _, execution_successful, error_message = asyncio.run(
+        main(stealth=not args.no_stealth, task=args.task)
     )
     print("\n=== Final Results ===")
-    print("Execution Successful (no technical errors):", execution_successful)
-    print("Final Result (from history.final_result()):", final_result)
+    print("Execution Successful:", execution_successful)
+    print("Final Result:", final_result)
     if error_message:
         print("Error Message:", error_message)
-
-    if args.provider == "browserbase" and session_data:
-        print("Browserbase Session URL:", session_data)
-    elif args.provider == "anchor" and session_data:
-        print("Anchor Session Recording:", session_data)
-    elif args.provider == "steelbrowser" and session_data:
-        print("Steel Session Recording URL:", session_data)
-    elif args.provider == "hyperbrowser" and session_data:
-        print("Hyperbrowser Session URL:", session_data)
